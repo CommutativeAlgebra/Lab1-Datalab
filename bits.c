@@ -146,7 +146,7 @@ NOTES:
  *   Rating: 1
  */
 int signMask(void) {
-  return 1;
+  return 1<<31;
 }
 
 // P2
@@ -158,7 +158,9 @@ int signMask(void) {
  *   Rating: 2
  */
 int bitXor(int x, int y) {
-	return 2;
+  int eitherOne = ~(~x & ~y);     /* x | y: 德摩根律展开 */
+  int bothOne = x & y;            /* x & y: 两位同时为 1 */
+  return eitherOne & ~bothOne;    /* (x|y) & ~(x&y) */
 }
 
 // P3
@@ -170,7 +172,9 @@ int bitXor(int x, int y) {
  *   Rating: 3
  */
 int negativePart(int x){
-  return 3;
+  int signMask = x >> 31;         /* x<0 -> 全 1, x>=0 -> 0 */
+  int negX = ~x + 1;              /* -x 的补码写法 */
+  return signMask & negX;         /* 非负时被掩码清零 */
 }
 
 
@@ -185,7 +189,12 @@ int negativePart(int x){
  *   Rating: 4
  */
 int copyByteWithin(int x, int src, int dst) {
-  return 4;
+  int srcShift = src << 3;                           /* 源字节的位偏移 = src*8 */
+  int dstShift = dst << 3;                           /* 目标字节的位偏移 = dst*8 */
+  int byte = (x >> srcShift) & 0xFF;                 /* 取出源字节 (0xFF 剪掉算术右移的符号扩展) */
+  int clearDst = ~(0xFF << dstShift);      /* 目标字节位置挖洞, 其余位保持 1 */
+  int cleared = x & clearDst;                        /* 目标字节已清 0 */
+  return cleared | (byte << dstShift);               /* 把源字节回填到目标位置 */
 }
 
 // P5
@@ -198,9 +207,12 @@ int copyByteWithin(int x, int src, int dst) {
  *   Rating: 4
  */
 int logicalShift(int x, int n) {
-  return 5;
+  int signBit = 1 << 31;              /* 只有一个 1 在最高位 */
+  int smear = signBit >> n;           /* 最高 n+1 位为 1 */
+  int keepLow = ~(smear << 1);        /* 高 n 位为 0 的掩码 */
+  int shifted = x >> n;               /* 算术右移: 高位可能被符号位污染 */
+  return shifted & keepLow;           /* 清除符号扩展位 */
 }
-
 // P6
 /*
  * swapNibblePairs - swap the low and high 4 bits within each byte of x
@@ -210,7 +222,12 @@ int logicalShift(int x, int n) {
  *   Rating: 4
  */
 int swapNibblePairs(int x) {
-  return 6;
+  int m = 0x0F | (0x0F << 8);             /* 0x00000F0F */
+  int lowNibbles, highNibbles;
+  m = m | (m << 16);                      /* 0x0F0F0F0F: 每字节的低 4 位 */
+  lowNibbles = (x & m) << 4;              /* 低半字节搬到高半字节 */
+  highNibbles = (x >> 4) & m;             /* 高半字节搬到低半字节 */
+  return lowNibbles | highNibbles;        /* 两块拼起来 */
 }
 
 // P7
@@ -223,7 +240,10 @@ int swapNibblePairs(int x) {
  *   Rating: 4
  */
 int secondLowestZeroBit(int x) {
-  return 7;
+  int y = ~x;                     /* x 的 0 -> y 的 1 */
+  int low = y & (~y + 1);         /* 最低的那一个 0 位 */
+  int rest = y ^ low;             /* 抠掉它 */
+  return rest & (~rest + 1);      /* 剩下的最低 1 位 = 第二低的 0 位 (空则 0) */
 }
 
 // P8
@@ -236,9 +256,13 @@ int secondLowestZeroBit(int x) {
  *   Rating: 5
  */
 int oddParity(int x) {
-  return 8;
+  x = x ^ (x >> 16);              /* 32 位折成 16 位 */
+  x = x ^ (x >> 8);               /* 16 -> 8 */
+  x = x ^ (x >> 4);               /* 8 -> 4 */
+  x = x ^ (x >> 2);               /* 4 -> 2 */
+  x = x ^ (x >> 1);               /* 2 -> 1: bit0 = 全部位的异或 */
+  return ~x & 1;                  /* 个数为偶数时返回 1 */
 }
-
 // P9
 /* 
  * rotateRightBits - rotate x to right by n bits
@@ -249,7 +273,13 @@ int oddParity(int x) {
  *   Rating: 5
  */
 int rotateRightBits(int x, int n) {
-  return 9;
+  int k = n & 31;                           /* 规约移位量, 兼容 n >= 32 */
+  int left = (32 + ~k + 1) & 31;            /* 32-k, 且 k=0 时为 0 (避免移 32 位) */
+  int keepLow = ~(((1 << 31) >> k) << 1);   /* 清掉算术右移补进来的高 k 位 */
+  int moved = x >> k;                       /* 普通右移: 高位可能是符号扩展 */
+  int logical = moved & keepLow;            /* 变成逻辑右移: 掉出去的低位不在这里 */
+  int wrap = x << left;                     /* 掉出去的低位绕回到最高位 */
+  return logical | wrap;                    /* 两段拼成循环右移 */
 }
 
 // P10
@@ -264,7 +294,12 @@ int rotateRightBits(int x, int n) {
  *   Rating: 5
  */
 int roundEvenPow2(int x, int n) {
-  return 10;
+  int q = x >> n;                                 /* 商 */
+  int half = 1 << (n + ~0);                       /* 2^(n-1): 半个步长 */
+  int oddQuotientBit = q & 1;                     /* 商的奇偶: 半整数时用来"取偶" */
+  int bias = (half + ~0) + oddQuotientBit;        /* half-1 + 商的奇偶位 (余数已含在 x 里) */
+  int rounded = (x + bias) >> n;                  /* 加偏置后取商 (就近舍入) */
+  return rounded << n;                            /* 再乘回 2^n, 低位全 0 */
 }
 
 // P11
@@ -280,7 +315,19 @@ int roundEvenPow2(int x, int n) {
  *   Rating: 5
  */
 int midpointTowardFirst(int x, int y) {
-  return 11;
+  int commonBits = x & y;                         /* x、y 公共的 1 */
+  int differingHalf = (x ^ y) >> 1;               /* 不同部分的"一半" */
+  int mid = commonBits + differingHalf;           /* floor((x+y)/2), 永不溢出 */
+
+  int xMinusY = x + ~y + 1;                       /* x - y (同号时精确, 异号且相差足够大时失真) */
+  int signsDiffer = (x ^ y) >> 31;                /* x、y 异号时全 1 */
+  int signsClash = (xMinusY ^ x) >> 31;           /* d 的符号与 x 不符时全 1 -> 差值溢出了 */
+  int signCorrect = signsDiffer & signsClash;     /* 两个条件同时成立时符号位是错的 */
+  int geMask = ~((xMinusY >> 31) ^ signCorrect);  /* 全 1 <=> x >= y */
+
+  int isHalf = (x ^ y) & 1;                       /* 1 <=> 真实中点是半整数 */
+  int adjust = geMask & isHalf;                   /* 半整数且 x 较大时进位 1, 否则 0 */
+  return mid + adjust;
 }
 
 
@@ -294,7 +341,21 @@ int midpointTowardFirst(int x, int y) {
  *   Rating: 7
  */
 int isBetweenEitherOrder(int x, int a, int b) {
-  return 12;
+  /* 第一部分: 无溢出地判断 x >= a */
+  /* d = x - a; 若 x、a 异号且 d 的符号与 x 不符, 说明差值溢出, 符号位要翻转 */
+  int xMinusA = x + ~a + 1;               /* x - a */
+  int geA = ~((xMinusA >> 31) ^ (((x ^ a) >> 31) & ((xMinusA ^ x) >> 31)));
+  /* geA 全 1 <=> x >= a, 0 <=> x < a */
+
+  /* 第二部分: 无溢出地判断 x >= b (完全同理) */
+  int xMinusB = x + ~b + 1;               /* x - b */
+  int geB = ~((xMinusB >> 31) ^ (((x ^ b) >> 31) & ((xMinusB ^ x) >> 31)));
+  /* geB 全 1 <=> x >= b */
+
+  /* 第三部分: 拼出 0/1 的最终答案 */
+  int inside = geA ^ geB;                 /* 全 1 <=> 恰好一个成立 */
+  int onEndpoint = !(x ^ a) | !(x ^ b);   /* 1 <=> x 落在端点上 */
+  return (inside | onEndpoint) & 1;       /* 归一化成 0/1 */
 }
 
 // P13
@@ -307,7 +368,14 @@ int isBetweenEitherOrder(int x, int a, int b) {
  *   Rating: 7
  */
 int mul5Sat(int x) {
-  return 13;
+  int fourX = x << 2;                                               /* 4x 的低 32 位 */
+  int lowSum = fourX + x;                                           /* 5x 的低 32 位 */
+  int carry = (((fourX & x) | ((fourX | x) & ~lowSum)) >> 31) & 1;  /* 加法的进位 */
+  int high = (x >> 30) + (x >> 31) + carry;                         /* 64 位和的高位字 (只可能是 -3..2) */
+  int mismatch = high ^ (lowSum >> 31);                             /* 非 0 <=> 高位字不是符号扩展 = 溢出 */
+  int satValue = (1 << 31) ^ ~(x >> 31);                            /* x>=0 -> INT_MAX, x<0 -> INT_MIN */
+  int overflowMask = (mismatch | (~mismatch + 1)) >> 31;            /* 溢出时全 1, 否则 0 */
+  return (lowSum & ~overflowMask) | (satValue & overflowMask);      /* 无分支选择 */
 }
 
 // P14
@@ -320,7 +388,20 @@ int mul5Sat(int x) {
  *   Rating: 7
  */
 int classifyAdd3(int x, int y, int z) {
-  return 14;
+  /* 第一级: x + y */
+  int low1 = x + y;                                                /* 低位和 */
+  int carry1 = (((x & y) | ((x | y) & ~low1)) >> 31) & 1;          /* 往第 32 位的进位 */
+
+  /* 第二级: (x+y) + z */
+  int low = low1 + z;                                              /* 低位和 */
+  int carry2 = (((low1 & z) | ((low1 | z) & ~low)) >> 31) & 1;
+
+  /* 高位字与判定 */
+  int high = (x >> 31) + (y >> 31) + (z >> 31) + carry1 + carry2;  /* 64 位和的高位字 */
+  int d = high + ~(low >> 31) + 1;                                 /* H - sign(low), =0 表示恰好装得下 */
+  int nonzeroMask = (d | (~d + 1)) >> 31;                          /* d != 0 时全 1 */
+  int negativeMask = d >> 31;                                      /* d < 0 时全 1 */
+  return (nonzeroMask & ~negativeMask & 1) | negativeMask;         /* 1 / 0 / -1 */
 }
 
 // P15
@@ -337,7 +418,49 @@ int classifyAdd3(int x, int y, int z) {
  *   Rating: 7
  */
 unsigned floatScaleThreeHalves(unsigned uf) {
-  return 15;
+
+  /* 拆位域 */
+  unsigned sign = uf & 0x80000000;        /* 符号位 */
+  unsigned exp = (uf >> 23) & 0xFF;       /* 阶码域 */
+  unsigned frac = uf & 0x7FFFFF;          /* 尾数域 */
+
+  unsigned mant;      /* 3 * (f 的整数尾数形式), 即要舍入的那个整数 n */
+  unsigned shift;     /* 需要丢掉的低位数 = ulp 相对 2^-150 的倍数 */
+  unsigned expOut;    /* 结果里的阶码域 */
+  unsigned q;         /* 舍入后的尾数 */
+  unsigned roundBit;  /* 公共舍入用的"半个 ulp 位" */
+
+  if (exp == 0xFF) return uf;             /* Inf / NaN: 原样返回 */
+  if ((exp | frac) == 0) return uf;       /* ±0: 原样返回, 保留 -0 */
+
+  if (exp == 0) {                         /* ---- 非规格化: 真值 = frac * 2^-149 ---- */
+    mant = (frac << 1) + frac;            /* n = 3*frac, 真值*1.5 = n * 2^-150 */
+    if (mant < 0x1000000) {               /* n < 2^24: 结果仍是非规格化数 */
+      q = mant >> 1;                      /* n/2: 步长从 2^-150 换到 2^-149 */
+      if (mant & 1) {                     /* n 为奇数 -> 恰好半整数, 取偶 */
+        q = q + (q & 1);                  /* 尾数为奇就进位到偶数 */
+      }
+      return sign | q;                    /* q 恰为 2^23 时自动变成 2^-126 */
+    }
+    shift  = 1;                           /* 结果是规格化数: 丢 1 位 */
+    expOut = 1;                           /* 阶码域 = 1 (即 2^-126) */
+  } else {                                /* ---- 规格化: 真值 = 1.frac * 2^(exp-127) ---- */
+    mant = ((frac | 0x800000) << 1) + (frac | 0x800000);  /* n = 3M, M 含隐藏 1 */
+    shift = (mant >> 25) + 1;             /* 最高位在第 24 或 25 位 -> shift = 1 或 2 */
+    expOut = shift + exp - 1;             /* 结果阶码域 */
+  }
+
+  /* 公共舍入: 把 mant 的低 shift 位按"就近偶数"消掉 (偏置法, 同 P10) */
+  roundBit = (mant >> shift) & 1;         /* 被丢掉部分的最高位 = 半个 ulp 位 */
+  q = mant + (1u << (shift - 1)) - 1 + roundBit;   /* 加偏置: 余数 > half 进位, = half 看奇偶 */
+  q = q >> shift;                         /* 丢掉低 shift 位 */
+  if (q >> 24) {                          /* q 进到了 2^24: 尾数溢出 */
+    q = q >> 1;                           /* 尾巴右移一位 */
+    expOut = expOut + 1;                  /* 阶码加一 */
+  }
+
+  if (expOut >= 255) return sign | 0x7F800000;   /* 溢出到无穷 (含舍入凑到 2^128) */
+  return sign | (expOut << 23) | (q & 0x7FFFFF);
 }
 
 // P16
@@ -353,7 +476,33 @@ unsigned floatScaleThreeHalves(unsigned uf) {
  *   Rating: 10
  */
 unsigned floatRoundEven(unsigned uf) {
-  return 16;
+  unsigned sign = uf & 0x80000000;        /* 符号位 */
+  unsigned exp = (uf >> 23) & 0xFF;       /* 阶码域 */
+  unsigned frac = uf & 0x7FFFFF;          /* 尾数域 */
+
+  unsigned mant;      /* 24 位尾数 (含隐藏 1): M */
+  unsigned drop;      /* 要清掉的低位个数 1..23 */
+  unsigned roundBit;  /* 被丢掉部分的最高位 = 半个 ulp 位 */
+  unsigned rounded;   /* 就近偶数舍入后的尾数 */
+
+  if (exp == 0xFF) return uf;             /* Inf / NaN 原样返回 */
+  if (exp < 126) return sign;             /* |v| < 0.5 -> ±0 (保留符号) */
+  if (exp == 126) {                       /* 0.5 <= |v| < 1 */
+    if (frac) return sign | 0x3F800000;   /* 严格大于 0.5 -> ±1.0 */
+    return sign;                          /* 恰好 0.5: 取偶 -> ±0 */
+  }
+  if (exp >= 150) return uf;              /* |v| >= 2^23: 已是整数, 原样返回 */
+
+  drop = 150 - exp;                       /* 要清掉的低位个数 (1..23) */
+  mant = frac | 0x800000;                 /* 24 位尾数 (含隐藏 1) */
+  roundBit = (mant >> drop) & 1;          /* 半个 ulp 位: 决定"入"还是"舍" */
+
+  /* 清掉低 drop 位, 就近偶数舍入 (偏置法) */
+  rounded = mant + (1u << (drop - 1)) - 1 + roundBit;
+  rounded = (rounded >> drop) << drop;
+
+  exp = exp + (rounded >> 24);            /* 尾数进位到 2^24 时阶码 +1 */
+  return sign | (exp << 23) | (rounded & 0x7FFFFF);
 }
 
 // P17
@@ -367,7 +516,25 @@ unsigned floatRoundEven(unsigned uf) {
  *   Rating: 10
  */
 unsigned float_i2f(int x) {
-  return 17;
+  unsigned sign = x & 0x80000000;         /* 符号位 */
+  unsigned magnitude = x;                 /* |x| (无符号形式) */
+  unsigned exp = 31;                      /* 无偏阶码初值 */
+  unsigned mant, roundBit, sticky;
+
+  if (x == 0) return 0;                   /* 0 -> +0 的全零位型 */
+  if (x < 0) magnitude = ~magnitude + 1;  /* magnitude = -x, 对 INT_MIN 也正确 */
+
+  while (!(magnitude & 0x80000000)) {     /* 左移规格化: 把最高 1 顶到 bit31 */
+    magnitude = magnitude << 1;
+    exp = exp - 1;                        /* 每移一位, 无偏阶码减一 */
+  }
+
+  mant = magnitude >> 8;                  /* 24 位: 隐藏 1 + 23 位尾数 */
+  roundBit = (magnitude >> 7) & 1;        /* 舍入位 (低 8 位的最高位) */
+  sticky = (magnitude & 0x7F) != 0;       /* 粘滞位: 低 7 位是否还有 1 */
+  mant = mant + (roundBit & (sticky | (mant & 1)));   /* 就近偶数舍入 (可能进位到 2^24) */
+
+  return sign | ((exp + 127 + (mant >> 24)) << 23) | (mant & 0x7FFFFF);
 }
 
 
@@ -381,7 +548,21 @@ unsigned float_i2f(int x) {
  *   Rating: 10
  */
 int bitCount(int x) {
-  return 18;
+  int m  = 0x0F | (0x0F << 8);        /* 0x00000F0F */
+  int m3, m5, m8, m16;
+
+  m = m | (m << 16);                  /* 0x0F0F0F0F: 每字节低半字节 */
+  m3 = m ^ (m << 2);                  /* 0x33333333: 0x0F^0x3C = 0x33 */
+  m5 = m3 ^ (m3 << 1);                /* 0x55555555: 0x33^0x66 = 0x55 */
+  m8 = 0xFF | (0xFF << 16);           /* 0x00FF00FF: 两个低字节 */
+  m16 = 0xFF | (0xFF << 8);           /* 0x0000FFFF: 低 16 位 */
+
+  x = (x & m5) + ((x >> 1)  & m5);    /* 组宽 2: 相邻两位的 1 的个数 */
+  x = (x & m3) + ((x >> 2)  & m3);    /* 组宽 4 */
+  x = (x & m) + ((x >> 4)  & m);      /* 组宽 8 */
+  x = (x & m8) + ((x >> 8)  & m8);    /* 组宽 16 */
+  x = (x & m16) + ((x >> 16) & m16);  /* 组宽 32: 全部 1 的个数 */
+  return x;
 }
 
 // P19
@@ -395,5 +576,19 @@ int bitCount(int x) {
  */
 int bitReverse(int x)
 {
-  return 19;
+  int m = 0x0F | (0x0F << 8);             /* 0x00000F0F */
+  int m3, m5, b8;                         /* m5 = 0x55555555, b8 = 0x0000FF00 */
+
+  m = m | (m << 16);                      /* 0x0F0F0F0F: 每字节的低半字节 */
+  m3 = m ^ (m << 2);                      /* 0x33333333: 每 2 位一组的低位 */
+  m5 = m3 ^ (m3 << 1);                    /* 0x55555555: 每 1 位一组的低位 */
+  b8 = 0xFF << 8;                         /* 0x0000FF00, 字节序倒置复用 */
+
+  x = ((x & m5) << 1) | ((x >> 1) & m5);  /* 每个 2 位组内部翻转 */
+  x = ((x & m3) << 2) | ((x >> 2) & m3);  /* 每个 4 位组 (半字节) 内部翻转 */
+  x = ((x & m)  << 4) | ((x >> 4) & m);   /* 每个 8 位组 (字节) 内部翻转 */
+
+  /* 字节序倒置: b3 b2 b1 b0 -> b0 b1 b2 b3 */
+  x = ((x >> 24) & 0xFF) | ((x >> 8) & b8) | ((x & b8) << 8) | (x << 24);
+  return x;
 }
